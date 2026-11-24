@@ -159,6 +159,16 @@ void bitonic_sort8192(int* arr, int n) {
                 _mm_store_si128((__m128i*)p, min_result);
                 _mm_store_si128((__m128i*)(p + 4), max_result);
         }
+
+        // stride = 2 and 1, inside each group of four.
+        for (int* p = arr; p < arr + n; p += 4) {
+                __m128i a = _mm_load_si128((__m128i*)p);
+                __m128i b = _mm_shuffle_epi32(a, _MM_SHUFFLE(1, 0, 3, 2));
+                a = _mm_blend_epi16(_mm_min_epi32(a, b), _mm_max_epi32(a, b), 0xF0);
+                b = _mm_shuffle_epi32(a, _MM_SHUFFLE(2, 3, 0, 1));
+                a = _mm_blend_epi16(_mm_min_epi32(a, b), _mm_max_epi32(a, b), 0xCC);
+                _mm_store_si128((__m128i*)p, a);
+        }
 }
 
 int asc_compare(const void* a, const void* b) {

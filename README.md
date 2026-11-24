@@ -7,7 +7,7 @@
 ## 发现并修复的错误
 
 1. **合并循环每层只处理了第一个分块**（第 2–8 版，共 44 处）：`sect_end` 每次只前进一个 `stride`，和 `p` 始终相等，从第二个分块开始内层循环一次都不执行。已改为 `sect_end += 2 * stride`。
-2. **第 3 版漏掉了最后两层比较**：只比较到步长 4，步长 2 和 1 没有做，每 4 个元素内部是乱序的。已用 `_mm_shuffle_epi32` 加 `_mm_blend_epi16` 在寄存器内补上。
+2. **第 3、4 版漏掉了最后两层比较**：只比较到步长 4，步长 2 和 1 没有做，每 4 个元素内部是乱序的。已用 `_mm_shuffle_epi32` 加 `_mm_blend_epi16` 在寄存器内补上。
 
 ## 当前状态
 
@@ -19,14 +19,14 @@
 | `1_nlogn.cc` | 两次 `qsort` 构造双调序列，再递归双调合并，O(n log n) | ✅ 通过 |
 | `2_norecursion.cc` | 合并改为非递归 | ✅ 通过（已修复） |
 | `3_simd.cc` | 最后几层用 SSE | ✅ 通过（已修复） |
-| `4_specialized.cc` | 针对 n = 8192 展开 | ❌ 仍有错误 |
+| `4_specialized.cc` | 针对 n = 8192 展开 | ✅ 通过（已修复） |
 | `5_simd8.cc` | AVX2（256 位） | ❌ 仍有错误 |
 | `6_simd16.cc` | AVX-512 | ❌ 仍有错误 |
 | `7_noqsort.cc` | 自己构造双调序列，不再调用 `qsort` | ❌ 仍有错误 |
 | `8_inregistersort8x8.cc` | 寄存器内 8×8 排序 | ❌ 仍有错误 |
 | `libc_qsort.cc`、`stl_sort.cc` | 基线 | ✅ 通过 |
 
-第 4–8 版修好之前，它们的耗时没有意义。
+第 5–8 版修好之前，它们的耗时没有意义。
 
 ## 性能
 
@@ -53,6 +53,6 @@ Hand-written bitonic sort on the CPU, from a naive version through a non-recursi
 
 **Correction (November 2026):** the earlier claim, in this README and in a 2024 blog post, that this code sorts 6× faster than `std::sort` is retracted. The original programs never checked their output. With an element-wise check against `std::sort`, every version from 2 onward failed to sort; the later versions were fast because most of the comparisons never ran.
 
-Two bugs are now fixed: the merge loop advanced `sect_end` by one stride instead of two, so each level processed only its first block (44 places in versions 2–8); and version 3 stopped at stride 4, skipping strides 2 and 1. Versions 0–3 and both baselines now pass the check; versions 4–8 still fail and their timings are meaningless until they are fixed. In every environment I could test (a shared AVX2 cloud VM on Compiler Explorer, and Apple Silicon via SIMDe), every version that passes the check is slower than `std::sort`.
+Two bugs are now fixed: the merge loop advanced `sect_end` by one stride instead of two, so each level processed only its first block (44 places in versions 2–8); and versions 3 and 4 stopped at stride 4, skipping strides 2 and 1. Versions 0–4 and both baselines now pass the check; versions 5–8 still fail and their timings are meaningless until they are fixed. In every environment I could test (a shared AVX2 cloud VM on Compiler Explorer, and Apple Silicon via SIMDe), every version that passes the check is slower than `std::sort`.
 
 Each program checks every sort against `std::sort` (`check_sorted.h`, outside the timed region), prints `CHECK PASSED` or `CHECK FAILED`, and exits non-zero on failure.
