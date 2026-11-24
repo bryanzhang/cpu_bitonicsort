@@ -38,41 +38,47 @@
 | `6_simd16.cc` | AVX-512 | ✅ 通过（已修复） |
 | `7_noqsort.cc` | 自己构造双调序列，不再调用 `qsort` | ✅ 通过（已修复） |
 | `8_inregistersort8x8.cc` | 寄存器内 8×8 排序 | ✅ 通过（已修复） |
-| `libc_qsort.cc`、`stl_sort.cc` | 基线 | ✅ 通过 |
+| `libc_qsort.cc`、`stl_sort.cc`、`x86_simd_sort.cc` | 基线 | ✅ 通过 |
 
 第 7、8 版另外用其他几种输入测试过，全部正确：全范围随机 `int`（含负数）、已排序、逆序、全部相同、随机 0/1、`INT_MIN` 与 `INT_MAX` 混合。
 
 ## 性能
 
-阿里云 ECS，Intel Xeon 6982P-C（4 vCPU，支持 AVX-512），GCC 15.2，`-O3`。每个版本运行 3 次，每次取 1000 次排序的平均值（第 0 版是 100 次），表中是 3 次的中位数，3 次之间相差不到 1%。
+阿里云 ECS，Intel Xeon 6982P-C（4 vCPU，支持 AVX-512），GCC 15.2，`-O3`。每个程序运行 3 次，每次取 1000 次排序的平均值（第 0 版是 100 次），表中是同一时段 3 次的中位数。大多数程序 3 次之间相差不到 1%，x86-simd-sort 约 3%；不同时段之间整体会有 2%–3% 的波动。
 
-| 版本 | 每次排序耗时 | 相对 `std::sort` 的速度 |
+| 实现 | 每次排序耗时 | 相对 `std::sort` 的速度 |
 |---|---|---|
-| `0_base` | 81.3 ms | 0.004× |
-| `1_nlogn` | 0.574 ms | 0.53× |
-| `2_norecursion` | 0.557 ms | 0.55× |
-| `3_simd`（SSE） | 0.511 ms | 0.59× |
-| `4_specialized` | 0.509 ms | 0.60× |
-| `5_simd8`（AVX2） | 0.505 ms | 0.60× |
-| `6_simd16`（AVX-512） | 0.502 ms | 0.60× |
-| **`7_noqsort`** | **0.0211 ms** | **14.4×** |
-| **`8_inregistersort8x8`** | **0.0200 ms** | **15.2×** |
+| `0_base` | 79.4 ms | 0.004× |
+| `1_nlogn` | 0.562 ms | 0.54× |
+| `2_norecursion` | 0.542 ms | 0.56× |
+| `3_simd`（SSE） | 0.498 ms | 0.61× |
+| `4_specialized` | 0.507 ms | 0.60× |
+| `5_simd8`（AVX2） | 0.504 ms | 0.60× |
+| `6_simd16`（AVX-512） | 0.504 ms | 0.60× |
+| **`7_noqsort`** | **0.0215 ms** | **14.2×** |
+| **`8_inregistersort8x8`** | **0.0203 ms** | **15.0×** |
 | `libc_qsort` | 0.523 ms | 0.58× |
 | `std::sort` | 0.304 ms | 1× |
+| x86-simd-sort v7.0（AVX2） | 0.0216 ms | 14.0× |
+| x86-simd-sort v7.0（AVX-512） | 0.0162 ms | 18.7× |
 
 第 1–6 版用两次 `qsort` 构造双调序列，这一步约 0.50 ms，占了总耗时的大部分。SIMD 只加速了后面的双调合并：单独计时，合并部分从标量的 35.8 µs（第 2 版）降到 SSE 的 11.5 µs（第 3 版）、AVX2 的 4.5 µs（第 5 版）和 AVX-512 的 3.1 µs（第 6 版）。第 7 版改用寄存器内排序加 SIMD 合并来构造双调序列，整个排序约 21 µs，比 `std::sort` 快约 14 倍；第 8 版把寄存器内排序从 4×4 换成 8×8，约 20 µs，快约 15 倍。
+
+作为参照，Intel 的 [x86-simd-sort](https://github.com/intel/x86-simd-sort)（v7.0，只用头文件的静态接口，单线程）在同一台机器上：AVX-512 实现 0.0162 ms，耗时比第 8 版少约 20%；AVX2 实现 0.0216 ms，和第 7、8 版相当。它是面向任意长度的通用实现，而这里的第 7、8 版只针对 8192 个元素。
 
 这些数字只适用于这台机器、这个固定规模（8192 个 `int`，32 KB，能放进 L1 缓存）和这种输入。
 
 ## 运行
 
 ```bash
-./run_7_noqsort.sh       # 编译并运行指定版本，输出平均耗时和校验结果
-./run_stl_sort.sh        # std::sort 基线
-./run_libc_qsort.sh      # qsort 基线
+./run_8_inregistersort8x8.sh   # 编译并运行指定版本，输出平均耗时和校验结果
+./run_stl_sort.sh              # std::sort 基线
+./run_libc_qsort.sh            # qsort 基线
+./run_x86_simd_sort.sh         # x86-simd-sort 基线（AVX-512）；首次运行会把 v7.0 拉到 third_party/
+./run_x86_simd_sort_avx2.sh    # x86-simd-sort 基线（AVX2）
 ```
 
-第 3–5 版需要支持 AVX2 的 x86 CPU，第 6–8 版需要支持 AVX-512 的 x86 CPU。
+第 3–5 版需要支持 AVX2 的 x86 CPU，第 6–8 版需要支持 AVX-512 的 x86 CPU。x86-simd-sort 需要支持 C++17 的编译器；已有本地副本时，可以用 `XSS_DIR=/path/to/x86-simd-sort` 指定。
 
 ---
 
@@ -82,6 +88,6 @@ Hand-written bitonic sort on the CPU, from a naive version through a non-recursi
 
 These bugs are now fixed: the merge loop advanced `sect_end` by one stride instead of two, so each level processed only its first block (44 places in versions 2–8); versions 3 and 4 stopped at stride 4, skipping strides 2 and 1; version 5 compared only half of each 8-element chunk at stride 16 and stopped at stride 8; version 6 stopped at stride 16; version 7 stopped its merges at stride 16, never merged the 4×4 in-register runs into runs of 16, and skipped the merge to 4096 before the final merge; and version 8's 8×8 in-register sort used an incomplete sorting network (12 comparators where 19 are needed) and an incorrect transpose, on top of the same three gaps as version 7. All versions and both baselines now pass the check. Versions 7 and 8 were also checked on full-range random ints, sorted, reverse-sorted, all-equal, random 0/1 and `INT_MIN`/`INT_MAX` inputs.
 
-On an Intel Xeon 6982P-C (Alibaba Cloud ECS, AVX-512, GCC 15.2, `-O3`), version 7 sorts 8192 ints in 0.0211 ms and version 8 in 0.0200 ms, versus 0.304 ms for `std::sort`: about 14× and 15× faster. Versions 1–6 are all slower than `std::sort`: their two `qsort` calls take about 0.50 ms, and SIMD speeds up only the merge (35.8 µs scalar, 3.1 µs AVX-512). These numbers apply to this machine, this fixed size (32 KB, which fits in L1) and this input.
+On an Intel Xeon 6982P-C (Alibaba Cloud ECS, AVX-512, GCC 15.2, `-O3`), version 7 sorts 8192 ints in 0.0215 ms and version 8 in 0.0203 ms, versus 0.304 ms for `std::sort`: about 14× and 15× faster. For reference, Intel's x86-simd-sort v7.0 (header-only static API, single-threaded) takes 0.0162 ms with AVX-512, about 20% less than version 8, and 0.0216 ms with AVX2; it is a general-purpose sort for any length, while versions 7 and 8 are specialized for 8192 elements. Versions 1–6 are all slower than `std::sort`: their two `qsort` calls take about 0.50 ms, and SIMD speeds up only the merge (35.8 µs scalar, 3.1 µs AVX-512). These numbers apply to this machine, this fixed size (32 KB, which fits in L1) and this input.
 
 Each program checks every sort against `std::sort` (`check_sorted.h`, outside the timed region), prints `CHECK PASSED` or `CHECK FAILED`, and exits non-zero on failure.
