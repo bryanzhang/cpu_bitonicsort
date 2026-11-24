@@ -13,6 +13,40 @@ constexpr int size = (1 << 13);
 // constexpr int size = (1 << 4);
 constexpr int tries = 1000;
 
+// Lane permutations for a 16-int register: lane i ^ j, a full reversal, and
+// a reversal of the second and fourth groups of four.
+alignas(64) static const int kXor8[16] = {8, 9, 10, 11, 12, 13, 14, 15, 0, 1, 2, 3, 4, 5, 6, 7};
+alignas(64) static const int kXor4[16] = {4, 5, 6, 7, 0, 1, 2, 3, 12, 13, 14, 15, 8, 9, 10, 11};
+alignas(64) static const int kXor2[16] = {2, 3, 0, 1, 6, 7, 4, 5, 10, 11, 8, 9, 14, 15, 12, 13};
+alignas(64) static const int kXor1[16] = {1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14};
+alignas(64) static const int kReverse[16] = {15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0};
+alignas(64) static const int kReverseOddFours[16] = {0, 1, 2, 3, 7, 6, 5, 4, 8, 9, 10, 11, 15, 14, 13, 12};
+
+// One compare-exchange step on the 16 ints of a register: lane i is paired with
+// lane idx[i] and keeps the larger value where bit i of max_mask is set.
+inline __m512i cmpx16(__m512i a, __m512i idx, __mmask16 max_mask) {
+        __m512i b = _mm512_permutexvar_epi32(idx, a);
+        return _mm512_mask_blend_epi32(max_mask, _mm512_min_epi32(a, b), _mm512_max_epi32(a, b));
+}
+
+// Strides 8, 4, 2 and 1 of a bitonic merge, inside each group of sixteen.
+template <bool desc>
+inline void merge_within16(int* arr, int n) {
+        const __m512i x8 = _mm512_load_si512((const __m512i*)kXor8);
+        const __m512i x4 = _mm512_load_si512((const __m512i*)kXor4);
+        const __m512i x2 = _mm512_load_si512((const __m512i*)kXor2);
+        const __m512i x1 = _mm512_load_si512((const __m512i*)kXor1);
+        const __mmask16 flip = desc ? 0xFFFF : 0;
+        for (int* p = arr; p < arr + n; p += 16) {
+                __m512i a = _mm512_load_si512((__m512i*)p);
+                a = cmpx16(a, x8, 0xFF00 ^ flip);
+                a = cmpx16(a, x4, 0xF0F0 ^ flip);
+                a = cmpx16(a, x2, 0xCCCC ^ flip);
+                a = cmpx16(a, x1, 0xAAAA ^ flip);
+                _mm512_store_si512((__m512i*)p, a);
+        }
+}
+
 // arr中已经是双调数列.
 // n为2的幂，且小于等于8192, 大于等于32.
 template <int n>
@@ -160,6 +194,8 @@ void bitonic_sort(int* arr) {
                 _mm512_store_si512((__m512i*)p, min_result);
                 _mm512_store_si512((__m512i*)(p + 16), max_result);
         }
+
+        merge_within16<false>(arr, n);
 }
 
 // arr中已经是双调数列.
@@ -309,9 +345,18 @@ void bitonic_sort_desc(int* arr) {
                 _mm512_store_si512((__m512i*)p, max_result);
                 _mm512_store_si512((__m512i*)(p + 16), min_result);
         }
+
+        merge_within16<true>(arr, n);
 }
 
 inline void make_bitonic8192(int* arr) {
+        const __m512i x8 = _mm512_load_si512((const __m512i*)kXor8);
+        const __m512i x4 = _mm512_load_si512((const __m512i*)kXor4);
+        const __m512i x2 = _mm512_load_si512((const __m512i*)kXor2);
+        const __m512i x1 = _mm512_load_si512((const __m512i*)kXor1);
+        const __m512i reverse = _mm512_load_si512((const __m512i*)kReverse);
+        const __m512i reverse_odd_fours = _mm512_load_si512((const __m512i*)kReverseOddFours);
+
         // stride = 16,每个块内排序
         for (int* p = arr; p < arr + 8192; p += 16) {
                 // 4*4 in-register sort.
@@ -349,11 +394,29 @@ inline void make_bitonic8192(int* arr) {
                 __m128i y = _mm_unpacklo_epi32(t1, t3); // y = (a[2], b[2], c[2], d[2])
                 __m128i z = _mm_unpackhi_epi32(t1, t3); // z = (a[3], b[3], c[3], d[3])
 
-                // 4.store
-                _mm_store_si128((__m128i*)p, w);
-                _mm_store_si128((__m128i*)(p + 4), x);
-                _mm_store_si128((__m128i*)(p + 8), y);
-                _mm_store_si128((__m128i*)(p + 12), z);
+                // 4. w, x, y and z are four ascending runs of four. Merge them
+                // into one run of sixteen: reverse the second and fourth runs so
+                // each eight is bitonic, merge the two eights in opposite
+                // directions, then merge the sixteen.
+                __m512i v = _mm512_castsi128_si512(w);
+                v = _mm512_inserti32x4(v, x, 1);
+                v = _mm512_inserti32x4(v, y, 2);
+                v = _mm512_inserti32x4(v, z, 3);
+                v = _mm512_permutexvar_epi32(reverse_odd_fours, v);
+                v = cmpx16(v, x4, 0x0FF0);
+                v = cmpx16(v, x2, 0x33CC);
+                v = cmpx16(v, x1, 0x55AA);
+                v = cmpx16(v, x8, 0xFF00);
+                v = cmpx16(v, x4, 0xF0F0);
+                v = cmpx16(v, x2, 0xCCCC);
+                v = cmpx16(v, x1, 0xAAAA);
+
+                // 5. Blocks that the next merge needs in descending order are
+                // reversed, using the same parity rule as the merges below.
+                if (__builtin_parity((unsigned)((p - arr) >> 4))) {
+                        v = _mm512_permutexvar_epi32(reverse, v);
+                }
+                _mm512_store_si512((__m512i*)p, v);
         }
 
         // stride = 32
@@ -460,6 +523,11 @@ inline void make_bitonic8192(int* arr) {
                         bitonic_sort_desc<2048>(p);
                 }
         }
+
+        // stride = 4096: ascending then descending, so the final merge sees a
+        // bitonic sequence.
+        bitonic_sort<4096>(arr);
+        bitonic_sort_desc<4096>(arr + 4096);
 }
 
 int asc_compare(const void* a, const void* b) {
