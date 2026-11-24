@@ -13,6 +13,48 @@ constexpr int size = (1 << 13);
 // constexpr int size = (1 << 4);
 constexpr int tries = 1000;
 
+// Lane permutations for a 16-int register: lane i ^ j, a full reversal, and
+// a reversal of the upper eight lanes.
+alignas(64) static const int kXor8[16] = {8, 9, 10, 11, 12, 13, 14, 15, 0, 1, 2, 3, 4, 5, 6, 7};
+alignas(64) static const int kXor4[16] = {4, 5, 6, 7, 0, 1, 2, 3, 12, 13, 14, 15, 8, 9, 10, 11};
+alignas(64) static const int kXor2[16] = {2, 3, 0, 1, 6, 7, 4, 5, 10, 11, 8, 9, 14, 15, 12, 13};
+alignas(64) static const int kXor1[16] = {1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14};
+alignas(64) static const int kReverse[16] = {15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0};
+alignas(64) static const int kReverseUpperEight[16] = {0, 1, 2, 3, 4, 5, 6, 7, 15, 14, 13, 12, 11, 10, 9, 8};
+
+// One compare-exchange step on the 16 ints of a register: lane i is paired with
+// lane idx[i] and keeps the larger value where bit i of max_mask is set.
+inline __m512i cmpx16(__m512i a, __m512i idx, __mmask16 max_mask) {
+        __m512i b = _mm512_permutexvar_epi32(idx, a);
+        return _mm512_mask_blend_epi32(max_mask, _mm512_min_epi32(a, b), _mm512_max_epi32(a, b));
+}
+
+// Strides 8, 4, 2 and 1 of a bitonic merge, inside each group of sixteen.
+template <bool desc>
+inline void merge_within16(int* arr, int n) {
+        const __m512i x8 = _mm512_load_si512((const __m512i*)kXor8);
+        const __m512i x4 = _mm512_load_si512((const __m512i*)kXor4);
+        const __m512i x2 = _mm512_load_si512((const __m512i*)kXor2);
+        const __m512i x1 = _mm512_load_si512((const __m512i*)kXor1);
+        const __mmask16 flip = desc ? 0xFFFF : 0;
+        for (int* p = arr; p < arr + n; p += 16) {
+                __m512i a = _mm512_load_si512((__m512i*)p);
+                a = cmpx16(a, x8, 0xFF00 ^ flip);
+                a = cmpx16(a, x4, 0xF0F0 ^ flip);
+                a = cmpx16(a, x2, 0xCCCC ^ flip);
+                a = cmpx16(a, x1, 0xAAAA ^ flip);
+                _mm512_store_si512((__m512i*)p, a);
+        }
+}
+
+// Compare-exchange of two 8-int registers, lane by lane: a gets the minimum.
+inline void cmpx8(__m256i& a, __m256i& b) {
+        __m256i lo = _mm256_min_epi32(a, b);
+        b = _mm256_max_epi32(a, b);
+        a = lo;
+}
+
+
 // arr中已经是双调数列.
 // n为2的幂，且小于等于8192, 大于等于32.
 template <int n>
@@ -160,6 +202,8 @@ void bitonic_sort(int* arr) {
                 _mm512_store_si512((__m512i*)p, min_result);
                 _mm512_store_si512((__m512i*)(p + 16), max_result);
         }
+
+        merge_within16<false>(arr, n);
 }
 
 // arr中已经是双调数列.
@@ -309,12 +353,21 @@ void bitonic_sort_desc(int* arr) {
                 _mm512_store_si512((__m512i*)p, max_result);
                 _mm512_store_si512((__m512i*)(p + 16), min_result);
         }
+
+        merge_within16<true>(arr, n);
 }
 
 inline void make_bitonic8192(int* arr) {
+        const __m512i x8 = _mm512_load_si512((const __m512i*)kXor8);
+        const __m512i x4 = _mm512_load_si512((const __m512i*)kXor4);
+        const __m512i x2 = _mm512_load_si512((const __m512i*)kXor2);
+        const __m512i x1 = _mm512_load_si512((const __m512i*)kXor1);
+        const __m512i reverse = _mm512_load_si512((const __m512i*)kReverse);
+        const __m512i reverse_upper_eight = _mm512_load_si512((const __m512i*)kReverseUpperEight);
+
         // stride = 64,每个块内排序
         for (int* p = arr; p < arr + 8192; p += 64) {
-                // 4*4 in-register sort.
+                // 8*8 in-register sort.
                 // 1.load
                 __m256i row0 = _mm256_loadu_si256((__m256i*)p);
                 __m256i row1 = _mm256_loadu_si256((__m256i*)(p + 8));
@@ -325,76 +378,72 @@ inline void make_bitonic8192(int* arr) {
                 __m256i row6 = _mm256_loadu_si256((__m256i*)(p + 48));
                 __m256i row7 = _mm256_loadu_si256((__m256i*)(p + 56));
 
-                // 2.分channel排序
-                // round 1
-                __m256i row0_0 = _mm256_min_epi32(row0, row1);
-                __m256i row1_0 = _mm256_min_epi32(row2, row3);
-                __m256i row2_0 = _mm256_min_epi32(row4, row5);
-                __m256i row3_0 = _mm256_min_epi32(row6, row7);
+                // 2. Sort each lane across the eight registers with Batcher's
+                // odd-even merge network: 19 compare-exchanges in 6 layers.
+                cmpx8(row0, row1); cmpx8(row2, row3); cmpx8(row4, row5); cmpx8(row6, row7);
+                cmpx8(row0, row2); cmpx8(row1, row3); cmpx8(row4, row6); cmpx8(row5, row7);
+                cmpx8(row1, row2); cmpx8(row5, row6);
+                cmpx8(row0, row4); cmpx8(row1, row5); cmpx8(row2, row6); cmpx8(row3, row7);
+                cmpx8(row2, row4); cmpx8(row3, row5);
+                cmpx8(row1, row2); cmpx8(row3, row4); cmpx8(row5, row6);
 
-                __m256i row4_0 = _mm256_max_epi32(row0, row1);
-                __m256i row5_0 = _mm256_max_epi32(row2, row3);
-                __m256i row6_0 = _mm256_max_epi32(row4, row5);
-                __m256i row7_0 = _mm256_max_epi32(row6, row7);
+                // 3. 8x8 transpose: afterwards each register holds one sorted lane.
+                __m256i t0 = _mm256_unpacklo_epi32(row0, row1);
+                __m256i t1 = _mm256_unpackhi_epi32(row0, row1);
+                __m256i t2 = _mm256_unpacklo_epi32(row2, row3);
+                __m256i t3 = _mm256_unpackhi_epi32(row2, row3);
+                __m256i t4 = _mm256_unpacklo_epi32(row4, row5);
+                __m256i t5 = _mm256_unpackhi_epi32(row4, row5);
+                __m256i t6 = _mm256_unpacklo_epi32(row6, row7);
+                __m256i t7 = _mm256_unpackhi_epi32(row6, row7);
+                __m256i u0 = _mm256_unpacklo_epi64(t0, t2);
+                __m256i u1 = _mm256_unpackhi_epi64(t0, t2);
+                __m256i u2 = _mm256_unpacklo_epi64(t1, t3);
+                __m256i u3 = _mm256_unpackhi_epi64(t1, t3);
+                __m256i u4 = _mm256_unpacklo_epi64(t4, t6);
+                __m256i u5 = _mm256_unpackhi_epi64(t4, t6);
+                __m256i u6 = _mm256_unpacklo_epi64(t5, t7);
+                __m256i u7 = _mm256_unpackhi_epi64(t5, t7);
+                const __m256i runs[8] = {
+                        _mm256_permute2x128_si256(u0, u4, 0x20), _mm256_permute2x128_si256(u1, u5, 0x20),
+                        _mm256_permute2x128_si256(u2, u6, 0x20), _mm256_permute2x128_si256(u3, u7, 0x20),
+                        _mm256_permute2x128_si256(u0, u4, 0x31), _mm256_permute2x128_si256(u1, u5, 0x31),
+                        _mm256_permute2x128_si256(u2, u6, 0x31), _mm256_permute2x128_si256(u3, u7, 0x31),
+                };
 
-                // round 2
-                __m256i row0_1 = _mm256_min_epi32(row0_0, row1_0);
-                __m256i row1_1 = _mm256_min_epi32(row2_0, row3_0);
+                // 4. Merge pairs of runs of eight into runs of sixteen: reverse the
+                // second run so the pair is bitonic, merge ascending, and reverse
+                // the blocks that the next merge needs in descending order (same
+                // parity rule as the merges below).
+                for (int k = 0; k < 4; ++k) {
+                        int* q = p + 16 * k;
+                        __m512i v = _mm512_inserti64x4(_mm512_castsi256_si512(runs[2 * k]), runs[2 * k + 1], 1);
+                        v = _mm512_permutexvar_epi32(reverse_upper_eight, v);
+                        v = cmpx16(v, x8, 0xFF00);
+                        v = cmpx16(v, x4, 0xF0F0);
+                        v = cmpx16(v, x2, 0xCCCC);
+                        v = cmpx16(v, x1, 0xAAAA);
+                        if (__builtin_parity((unsigned)((q - arr) >> 4))) {
+                                v = _mm512_permutexvar_epi32(reverse, v);
+                        }
+                        _mm512_store_si512((__m512i*)q, v);
+                }
+        }
 
-                __m256i row2_1 = _mm256_max_epi32(row0_0, row1_0);
-                __m256i row3_1 = _mm256_max_epi32(row2_0, row3_0);
-
-                __m256i row4_1 = _mm256_min_epi32(row4_0, row5_0);
-                __m256i row5_1 = _mm256_min_epi32(row6_0, row7_0);
-
-                __m256i row6_1 = _mm256_max_epi32(row4_0, row5_0);
-                __m256i row7_1 = _mm256_max_epi32(row6_0, row7_0);
-
-                // round 3
-                __m256i row0_2 = _mm256_min_epi32(row0_1, row1_1);
-                __m256i row1_2 = _mm256_max_epi32(row0_1, row1_1);
-                __m256i row2_2 = _mm256_min_epi32(row2_1, row3_1);
-                __m256i row3_2 = _mm256_max_epi32(row2_1, row3_1);
-                __m256i row4_2 = _mm256_min_epi32(row4_1, row5_1);
-                __m256i row5_2 = _mm256_max_epi32(row4_1, row5_1);
-                __m256i row6_2 = _mm256_min_epi32(row6_1, row7_1);
-                __m256i row7_2 = _mm256_max_epi32(row6_1, row7_1);
-
-                // 3.转置
-                __m256i t0 = _mm256_unpacklo_epi32(row0_2, row4_2);
-                __m256i t1 = _mm256_unpackhi_epi32(row0_2, row4_2);
-                __m256i t2 = _mm256_unpacklo_epi32(row1_2, row5_2);
-                __m256i t3 = _mm256_unpackhi_epi32(row1_2, row5_2);
-                __m256i t4 = _mm256_unpacklo_epi32(row2_2, row6_2);
-                __m256i t5 = _mm256_unpackhi_epi32(row2_2, row6_2);
-                __m256i t6 = _mm256_unpacklo_epi32(row3_2, row7_2);
-                __m256i t7 = _mm256_unpackhi_epi32(row3_2, row7_2);
-                __m256i w0 = _mm256_unpacklo_epi32(t0, t4);
-                __m256i w1 = _mm256_unpackhi_epi32(t0, t4);
-                __m256i w2 = _mm256_unpacklo_epi32(t1, t5);
-                __m256i w3 = _mm256_unpackhi_epi32(t1, t5);
-                __m256i w4 = _mm256_unpacklo_epi32(t2, t6);
-                __m256i w5 = _mm256_unpackhi_epi32(t2, t6);
-                __m256i w6 = _mm256_unpacklo_epi32(t3, t7);
-                __m256i w7 = _mm256_unpackhi_epi32(t3, t7);
-                __m256i x0 = _mm256_unpacklo_epi32(w0, w4);
-                __m256i x1 = _mm256_unpackhi_epi32(w0, w4);
-                __m256i x2 = _mm256_unpacklo_epi32(w1, w5);
-                __m256i x3 = _mm256_unpackhi_epi32(w1, w5);
-                __m256i x4 = _mm256_unpacklo_epi32(w2, w6);
-                __m256i x5 = _mm256_unpackhi_epi32(w2, w6);
-                __m256i x6 = _mm256_unpacklo_epi32(w3, w7);
-                __m256i x7 = _mm256_unpackhi_epi32(w3, w7);
-
-                // 4.store
-                _mm256_storeu_si256((__m256i*)p, x0);
-                _mm256_storeu_si256((__m256i*)(p + 8), x1);
-                _mm256_storeu_si256((__m256i*)(p + 16), x2);
-                _mm256_storeu_si256((__m256i*)(p + 24), x3);
-                _mm256_storeu_si256((__m256i*)(p + 32), x4);
-                _mm256_storeu_si256((__m256i*)(p + 40), x5);
-                _mm256_storeu_si256((__m256i*)(p + 48), x6);
-                _mm256_storeu_si256((__m256i*)(p + 56), x7);
+        // stride = 32 and 64
+        for (int* p = arr; p < arr + 8192; p += 32) {
+                if (__builtin_parity((unsigned)((p - arr) >> 5))) {
+                        bitonic_sort_desc<32>(p);
+                } else {
+                        bitonic_sort<32>(p);
+                }
+        }
+        for (int* p = arr; p < arr + 8192; p += 64) {
+                if (__builtin_parity((unsigned)((p - arr) >> 6))) {
+                        bitonic_sort_desc<64>(p);
+                } else {
+                        bitonic_sort<64>(p);
+                }
         }
 
         // stride = 128
@@ -471,6 +520,11 @@ inline void make_bitonic8192(int* arr) {
                         bitonic_sort_desc<2048>(p);
                 }
         }
+
+        // stride = 4096: ascending then descending, so the final merge sees a
+        // bitonic sequence.
+        bitonic_sort<4096>(arr);
+        bitonic_sort_desc<4096>(arr + 4096);
 }
 
 int asc_compare(const void* a, const void* b) {
