@@ -128,12 +128,12 @@ void bitonic_sort8192(int* arr, int n) {
         for (int* p = arr, *q = arr + 16, *sect_end = arr + 16; q < arr + n; sect_end += 2 * 16, p += 16, q += 16) {
 // #pragma unroll
                 for (; p < sect_end; p += 8, q += 8) {
-                        __m128i a = _mm_load_si128((__m128i*)p);
-                        __m128i b = _mm_load_si128((__m128i*)q);
-                        __m128i min_result = _mm_min_epi32(a, b);
-                        __m128i max_result = _mm_max_epi32(a, b);
-                        _mm_store_si128((__m128i*)p, min_result);
-                        _mm_store_si128((__m128i*)q, max_result);
+                        __m256i a = _mm256_load_si256((__m256i*)p);
+                        __m256i b = _mm256_load_si256((__m256i*)q);
+                        __m256i min_result = _mm256_min_epi32(a, b);
+                        __m256i max_result = _mm256_max_epi32(a, b);
+                        _mm256_store_si256((__m256i*)p, min_result);
+                        _mm256_store_si256((__m256i*)q, max_result);
                 }
         }
 
@@ -145,6 +145,18 @@ void bitonic_sort8192(int* arr, int n) {
                 __m256i max_result = _mm256_max_epi32(a, b);
                 _mm256_store_si256((__m256i*)p, min_result);
                 _mm256_store_si256((__m256i*)(p + 8), max_result);
+        }
+
+        // stride = 4, 2 and 1, inside each group of eight.
+        for (int* p = arr; p < arr + n; p += 8) {
+                __m256i a = _mm256_load_si256((__m256i*)p);
+                __m256i b = _mm256_permute4x64_epi64(a, _MM_SHUFFLE(1, 0, 3, 2));
+                a = _mm256_blend_epi32(_mm256_min_epi32(a, b), _mm256_max_epi32(a, b), 0xF0);
+                b = _mm256_shuffle_epi32(a, _MM_SHUFFLE(1, 0, 3, 2));
+                a = _mm256_blend_epi32(_mm256_min_epi32(a, b), _mm256_max_epi32(a, b), 0xCC);
+                b = _mm256_shuffle_epi32(a, _MM_SHUFFLE(2, 3, 0, 1));
+                a = _mm256_blend_epi32(_mm256_min_epi32(a, b), _mm256_max_epi32(a, b), 0xAA);
+                _mm256_store_si256((__m256i*)p, a);
         }
 }
 
