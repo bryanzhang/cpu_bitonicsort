@@ -2,6 +2,8 @@
 #include <cstdlib>
 #include <iostream>
 
+#include "check_sorted.h"
+
 using namespace std;
 
 constexpr int size = (1 << 13);
@@ -17,10 +19,12 @@ double test(int* arr) {
         for (int i = 0; i < size; ++i) {
                 arr[i] = (rand() % 0x3ff);
         }
+        sort_check.expect(arr, size);
 
         auto start = chrono::high_resolution_clock::now();
         qsort(arr, size, sizeof(int), asc_compare);
         auto end = chrono::high_resolution_clock::now();
+        sort_check.verify(arr, size);
         chrono::duration<double> elapsed = end - start;
         return elapsed.count() * 1000;
 }
@@ -38,5 +42,5 @@ int main() {
         // cout << endl;
         cout << "n=" << size << ", average time: " << millis / tries << " ms." << endl;
         delete[] arr;
-        return 0;
+        return sort_check.report();
 }

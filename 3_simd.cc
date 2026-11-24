@@ -5,6 +5,8 @@
 #include <emmintrin.h>
 #include <immintrin.h>
 
+#include "check_sorted.h"
+
 using namespace std;
 
 constexpr int size = (1 << 13);
@@ -33,7 +35,7 @@ void bitonic_sort(int* arr, int n) {
 
 #pragma unroll
         for (int stride = (n >> 2); stride >= 8; stride >>= 1) {
-                for (int* p = arr, *q = arr + stride, *sect_end = arr + stride; q < arr + n; sect_end += stride, p += stride, q += stride) {
+                for (int* p = arr, *q = arr + stride, *sect_end = arr + stride; q < arr + n; sect_end += 2 * stride, p += stride, q += stride) {
                         for (; p < sect_end; ++p, ++q) {
                                 compareAndSwap(p, q);
                         }
@@ -47,6 +49,16 @@ void bitonic_sort(int* arr, int n) {
                 __m128i max_result = _mm_max_epi32(a, b);
                 _mm_store_si128((__m128i*)p, min_result);
                 _mm_store_si128((__m128i*)(p + 4), max_result);
+        }
+
+        // stride = 2 and 1, inside each group of four.
+        for (int* p = arr; p < arr + n; p += 4) {
+                __m128i a = _mm_load_si128((__m128i*)p);
+                __m128i b = _mm_shuffle_epi32(a, _MM_SHUFFLE(1, 0, 3, 2));
+                a = _mm_blend_epi16(_mm_min_epi32(a, b), _mm_max_epi32(a, b), 0xF0);
+                b = _mm_shuffle_epi32(a, _MM_SHUFFLE(2, 3, 0, 1));
+                a = _mm_blend_epi16(_mm_min_epi32(a, b), _mm_max_epi32(a, b), 0xCC);
+                _mm_store_si128((__m128i*)p, a);
         }
 }
 
@@ -66,6 +78,7 @@ double test(int* arr) {
         for (int i = 0; i < size; ++i) {
                 arr[i] = (rand() % 0x3ff);
         }
+        sort_check.expect(arr, size);
 
         auto start = chrono::high_resolution_clock::now();
         // make bitnoic
@@ -73,6 +86,7 @@ double test(int* arr) {
         qsort(arr + (size >> 1), size - (size >> 1), sizeof(int), desc_compare);
         bitonic_sort(arr, size);
         auto end = chrono::high_resolution_clock::now();
+        sort_check.verify(arr, size);
         chrono::duration<double> elapsed = end - start;
         return elapsed.count() * 1000;
 }
@@ -90,5 +104,5 @@ int main() {
         cout << endl;
         cout << "n=" << size << ", average time: " << millis / tries << " ms." << endl;
         delete[] arr;
-        return 0;
+        return sort_check.report();
 }

@@ -4,6 +4,8 @@
 #include <iostream>
 #include <vector>
 
+#include "check_sorted.h"
+
 using namespace std;
 
 constexpr int size = (1 << 13);
@@ -13,10 +15,12 @@ double test(vector<int>& arr) {
         for (int i = 0; i < size; ++i) {
                 arr[i] = (rand() % 0x3ff);
         }
+        sort_check.expect(arr.data(), size);
 
         auto start = chrono::high_resolution_clock::now();
         sort(arr.begin(), arr.end());
         auto end = chrono::high_resolution_clock::now();
+        sort_check.verify(arr.data(), size);
         chrono::duration<double> elapsed = end - start;
         return elapsed.count() * 1000;
 }
@@ -33,5 +37,5 @@ int main() {
         // }
         // cout << endl;
         cout << "n=" << size << ", average time: " << millis / tries << " ms." << endl;
-        return 0;
+        return sort_check.report();
 }

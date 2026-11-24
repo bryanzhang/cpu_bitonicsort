@@ -2,6 +2,8 @@
 #include <cstdlib>
 #include <iostream>
 
+#include "check_sorted.h"
+
 using namespace std;
 
 constexpr int size = (1 << 13);
@@ -27,7 +29,7 @@ void bitonic_sort(int* arr, int n) {
         }
 
         for (int stride = (n >> 2); stride >= 1; stride >>= 1) {
-                for (int* p = arr, *q = arr + stride, *sect_end = arr + stride; q < arr + n; sect_end += stride, p += stride, q += stride) {
+                for (int* p = arr, *q = arr + stride, *sect_end = arr + stride; q < arr + n; sect_end += 2 * stride, p += stride, q += stride) {
                         for (; p < sect_end; ++p, ++q) {
                                 compareAndSwap(p, q);
                         }
@@ -51,6 +53,7 @@ double test(int* arr) {
         for (int i = 0; i < size; ++i) {
                 arr[i] = (rand() % 0x3ff);
         }
+        sort_check.expect(arr, size);
 
         auto start = chrono::high_resolution_clock::now();
         // make bitnoic
@@ -58,6 +61,7 @@ double test(int* arr) {
         qsort(arr + (size >> 1), size - (size >> 1), sizeof(int), desc_compare);
         bitonic_sort(arr, size);
         auto end = chrono::high_resolution_clock::now();
+        sort_check.verify(arr, size);
         chrono::duration<double> elapsed = end - start;
         return elapsed.count() * 1000;
 }
@@ -75,5 +79,5 @@ int main() {
         cout << endl;
         cout << "n=" << size << ", average time: " << millis / tries << " ms." << endl;
         delete[] arr;
-        return 0;
+        return sort_check.report();
 }

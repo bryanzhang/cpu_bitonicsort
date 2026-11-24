@@ -5,6 +5,8 @@
 #include <emmintrin.h>
 #include <immintrin.h>
 
+#include "check_sorted.h"
+
 using namespace std;
 
 constexpr int size = (1 << 13);
@@ -29,7 +31,7 @@ void bitonic_sort(int* arr) {
 
         // stride = 2048
         if (n >= 4096) {
-                for (int* p = arr, *q = arr + 2048, *sect_end = arr + 2048; q < arr + n; sect_end += 2048, p += 2048, q += 2048) {
+                for (int* p = arr, *q = arr + 2048, *sect_end = arr + 2048; q < arr + n; sect_end += 2 * 2048, p += 2048, q += 2048) {
                         for (; p < sect_end; p += 16, q += 16) {
                                 __m512i a = _mm512_load_si512((__m512i*)p);
                                 __m512i b = _mm512_load_si512((__m512i*)q);
@@ -43,7 +45,7 @@ void bitonic_sort(int* arr) {
 
         // stride = 1024
         if (n >= 2048) {
-                for (int* p = arr, *q = arr + 1024, *sect_end = arr + 1024; q < arr + n; sect_end += 1024, p += 1024, q += 1024) {
+                for (int* p = arr, *q = arr + 1024, *sect_end = arr + 1024; q < arr + n; sect_end += 2 * 1024, p += 1024, q += 1024) {
                         for (; p < sect_end; p += 16, q += 16) {
                                 __m512i a = _mm512_load_si512((__m512i*)p);
                                 __m512i b = _mm512_load_si512((__m512i*)q);
@@ -57,7 +59,7 @@ void bitonic_sort(int* arr) {
 
         // stride = 512
         if (n >= 1024) {
-                for (int* p = arr, *q = arr + 512, *sect_end = arr + 512; q < arr + n; sect_end += 512, p += 512, q += 512) {
+                for (int* p = arr, *q = arr + 512, *sect_end = arr + 512; q < arr + n; sect_end += 2 * 512, p += 512, q += 512) {
                         for (; p < sect_end; p += 16, q += 16) {
                                 __m512i a = _mm512_load_si512((__m512i*)p);
                                 __m512i b = _mm512_load_si512((__m512i*)q);
@@ -71,7 +73,7 @@ void bitonic_sort(int* arr) {
 
         // stride = 256
         if (n >= 512) {
-                for (int* p = arr, *q = arr + 256, *sect_end = arr + 256; q < arr + n; sect_end += 256, p += 256, q += 256) {
+                for (int* p = arr, *q = arr + 256, *sect_end = arr + 256; q < arr + n; sect_end += 2 * 256, p += 256, q += 256) {
                         for (; p < sect_end; p += 16, q += 16) {
                                 __m512i a = _mm512_load_si512((__m512i*)p);
                                 __m512i b = _mm512_load_si512((__m512i*)q);
@@ -85,7 +87,7 @@ void bitonic_sort(int* arr) {
 
         // stride = 128
         if (n >= 256) {
-                for (int* p = arr, *q = arr + 128, *sect_end = arr + 128; q < arr + n; sect_end += 128, p += 128, q += 128) {
+                for (int* p = arr, *q = arr + 128, *sect_end = arr + 128; q < arr + n; sect_end += 2 * 128, p += 128, q += 128) {
                         for (; p < sect_end; p += 16, q += 16) {
                                 __m512i a = _mm512_load_si512((__m512i*)p);
                                 __m512i b = _mm512_load_si512((__m512i*)q);
@@ -178,7 +180,7 @@ void bitonic_sort_desc(int* arr) {
 
         // stride = 2048
         if (n >= 4096) {
-                for (int* p = arr, *q = arr + 2048, *sect_end = arr + 2048; q < arr + n; sect_end += 2048, p += 2048, q += 2048) {
+                for (int* p = arr, *q = arr + 2048, *sect_end = arr + 2048; q < arr + n; sect_end += 2 * 2048, p += 2048, q += 2048) {
                         for (; p < sect_end; p += 16, q += 16) {
                                 __m512i a = _mm512_load_si512((__m512i*)p);
                                 __m512i b = _mm512_load_si512((__m512i*)q);
@@ -192,7 +194,7 @@ void bitonic_sort_desc(int* arr) {
 
         // stride = 1024
         if (n >= 2048) {
-                for (int* p = arr, *q = arr + 1024, *sect_end = arr + 1024; q < arr + n; sect_end += 1024, p += 1024, q += 1024) {
+                for (int* p = arr, *q = arr + 1024, *sect_end = arr + 1024; q < arr + n; sect_end += 2 * 1024, p += 1024, q += 1024) {
                         for (; p < sect_end; p += 16, q += 16) {
                                 __m512i a = _mm512_load_si512((__m512i*)p);
                                 __m512i b = _mm512_load_si512((__m512i*)q);
@@ -206,7 +208,7 @@ void bitonic_sort_desc(int* arr) {
 
         // stride = 512
         if (n >= 1024) {
-                for (int* p = arr, *q = arr + 512, *sect_end = arr + 512; q < arr + n; sect_end += 512, p += 512, q += 512) {
+                for (int* p = arr, *q = arr + 512, *sect_end = arr + 512; q < arr + n; sect_end += 2 * 512, p += 512, q += 512) {
                         for (; p < sect_end; p += 16, q += 16) {
                                 __m512i a = _mm512_load_si512((__m512i*)p);
                                 __m512i b = _mm512_load_si512((__m512i*)q);
@@ -220,7 +222,7 @@ void bitonic_sort_desc(int* arr) {
 
         // stride = 256
         if (n >= 512) {
-                for (int* p = arr, *q = arr + 256, *sect_end = arr + 256; q < arr + n; sect_end += 256, p += 256, q += 256) {
+                for (int* p = arr, *q = arr + 256, *sect_end = arr + 256; q < arr + n; sect_end += 2 * 256, p += 256, q += 256) {
                         for (; p < sect_end; p += 16, q += 16) {
                                 __m512i a = _mm512_load_si512((__m512i*)p);
                                 __m512i b = _mm512_load_si512((__m512i*)q);
@@ -234,7 +236,7 @@ void bitonic_sort_desc(int* arr) {
 
         // stride = 128
         if (n >= 256) {
-                for (int* p = arr, *q = arr + 128, *sect_end = arr + 128; q < arr + n; sect_end += 128, p += 128, q += 128) {
+                for (int* p = arr, *q = arr + 128, *sect_end = arr + 128; q < arr + n; sect_end += 2 * 128, p += 128, q += 128) {
                         for (; p < sect_end; p += 16, q += 16) {
                                 __m512i a = _mm512_load_si512((__m512i*)p);
                                 __m512i b = _mm512_load_si512((__m512i*)q);
@@ -487,11 +489,13 @@ double test(int* arr) {
         for (int i = 0; i < size; ++i) {
                 arr[i] = (rand() % 0x3ff);
         }
+        sort_check.expect(arr, size);
 
         auto start = chrono::high_resolution_clock::now();
         make_bitonic8192(arr);
         bitonic_sort<8192>(arr);
         auto end = chrono::high_resolution_clock::now();
+        sort_check.verify(arr, size);
         chrono::duration<double> elapsed = end - start;
         return elapsed.count() * 1000;
 }
@@ -510,5 +514,5 @@ int main() {
         cout << endl;
         cout << "n=" << size << ", average time: " << millis / tries << " ms." << endl;
         free(arr);
-        return 0;
+        return sort_check.report();
 }
