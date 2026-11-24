@@ -152,6 +152,20 @@ void bitonic_sort8192(int* arr, int n) {
                 _mm512_store_si512((__m512i*)p, min_result);
                 _mm512_store_si512((__m512i*)(p + 16), max_result);
         }
+
+        // stride = 8, 4, 2 and 1, inside each group of sixteen.
+        for (int* p = arr; p < arr + n; p += 16) {
+                __m512i a = _mm512_load_si512((__m512i*)p);
+                __m512i b = _mm512_shuffle_i64x2(a, a, _MM_SHUFFLE(1, 0, 3, 2));
+                a = _mm512_mask_blend_epi32(0xFF00, _mm512_min_epi32(a, b), _mm512_max_epi32(a, b));
+                b = _mm512_shuffle_i64x2(a, a, _MM_SHUFFLE(2, 3, 0, 1));
+                a = _mm512_mask_blend_epi32(0xF0F0, _mm512_min_epi32(a, b), _mm512_max_epi32(a, b));
+                b = _mm512_shuffle_epi32(a, (_MM_PERM_ENUM)_MM_SHUFFLE(1, 0, 3, 2));
+                a = _mm512_mask_blend_epi32(0xCCCC, _mm512_min_epi32(a, b), _mm512_max_epi32(a, b));
+                b = _mm512_shuffle_epi32(a, (_MM_PERM_ENUM)_MM_SHUFFLE(2, 3, 0, 1));
+                a = _mm512_mask_blend_epi32(0xAAAA, _mm512_min_epi32(a, b), _mm512_max_epi32(a, b));
+                _mm512_store_si512((__m512i*)p, a);
+        }
 }
 
 int asc_compare(const void* a, const void* b) {
